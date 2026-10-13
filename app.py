@@ -1,4 +1,5 @@
-
+import os
+from ollama import Client
 import asyncio
 import json
 import sys
@@ -283,3 +284,222 @@ st.download_button(
     file_name="inventario_bodega.csv",
     mime="text/csv"
 )
+
+# -------------------------------
+# ASISTENTE IA CON OLLAMA CLOUD + MCP
+# -------------------------------
+
+def obtener_configuracion_ollama():
+    api_key = st.secrets.get(
+        "OLLAMA_API_KEY",
+        os.environ.get("OLLAMA_API_KEY", "")
+    )
+
+    modelo = st.secrets.get(
+        "OLLAMA_MODEL",
+        os.environ.get("OLLAMA_MODEL", "gpt-oss:20b")
+    )
+
+    if not api_key:
+        raise ValueError(
+            "Falta configurar OLLAMA_API_KEY en los Secrets de Streamlit."
+        )
+
+    cliente = Client(
+        host="https://ollama.com",
+        headers={"Authorization": f"Bearer {api_key}"}
+    )
+
+    return cliente, modelo
+
+
+HERRAMIENTAS_IA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "listar_inventario",
+            "description": (
+                "Obtiene todos los productos registrados, "
+                "sus ubicaciones y sus existencias."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_producto",
+            "description": (
+                "Consulta un producto usando su código exacto."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "codigo": {
+                        "type": "string",
+                        "description": "Código del producto, por ejemplo A100."
+                    }
+                },
+                "required": ["codigo"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ubicaciones_vacias",
+            "description": (
+                "Encuentra los productos cuya existencia es cero. "
+                "La herramienta devuelve la ubicación y el producto."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    }
+]
+
+
+def ejecutar_herramienta_ia(nombre, argumentos):
+    herramientas_permitidas = {
+        "listar_inventario",
+        "consultar_producto",
+        "ubicaciones_vacias"
+    }
+
+    if nombre not in herramientas_permitidas:
+        raise ValueError(f"Herramienta no permitida: {nombre}")
+
+    resultado = asyncio.run(
+        ejecutar_mcp(nombre, argumentos)
+    )
+
+    datos = convertir_respuesta(resultado)
+
+    return json.dumps(
+        datos,
+        ensure_ascii=False,
+        default=str
+    )
+
+
+def consultar_ia(pregunta):
+    cliente, modelo = obtener_configuracion_ollama()
+
+    mensajes = [
+        {
+            "role": "system",
+            "content": (
+                "Eres un asistente de inventario de bodega. "
+                "Responde siempre en español, de forma clara y profesional. "
+                "Para responder preguntas sobre existencias, productos "
+                "o ubicaciones, utiliza las herramientas MCP disponibles. "
+                "No inventes códigos, cantidades ni ubicaciones. "
+                "Si no encuentras un producto, indícalo claramente. "
+                "Importante: ubicaciones_vacias identifica productos "
+                "con existencia cero; no confirma que una ubicación "
+                "física esté libre de otros productos."
+            )
+        },
+        {
+            "role": "user",
+            "content": pregunta
+        }
+    ]
+
+    # Permite que la IA utilice una o varias herramientas MCP.
+    for _ in range(5):
+        respuesta = cliente.chat(
+            model=modelo,
+            messages=mensajes,
+            tools=HERRAMIENTAS_IA
+        )
+
+        mensaje = respuesta.message
+        mensajes.append(mensaje)
+
+        llamadas = mensaje.tool_calls or []
+
+        if not llamadas:
+            return mensaje.content or "No se recibió una respuesta de la IA."
+
+        for llamada in llamadas:
+            nombre = llamada.function.name
+            argumentos = llamada.function.arguments or {}
+
+            try:
+                resultado = ejecutar_herramienta_ia(
+                    nombre,
+                    argumentos
+                )
+            except Exception as error:
+                resultado = json.dumps({
+                    "error": str(error)
+                }, ensure_ascii=False)
+
+            mensajes.append({
+                "role": "tool",
+                "tool_name": nombre,
+                "content": resultado
+            })
+
+    return (
+        "La consulta necesitó más pasos de los permitidos. "
+        "Intenta formular una pregunta más específica."
+    )
+
+
+# -------------------------------
+# INTERFAZ DEL ASISTENTE
+# -------------------------------
+
+st.divider()
+st.header("🤖 Asistente inteligente de inventario")
+st.caption(
+    "Pregunta sobre productos, códigos, existencias y ubicaciones. "
+    "La IA puede consultar el servidor MCP."
+)
+
+if "historial_ia" not in st.session_state:
+    st.session_state.historial_ia = []
+
+for mensaje in st.session_state.historial_ia:
+    with st.chat_message(mensaje["role"]):
+        st.markdown(mensaje["content"])
+
+pregunta = st.chat_input(
+    "Ejemplo: ¿Qué productos están agotados?"
+)
+
+if pregunta:
+    st.session_state.historial_ia.append({
+        "role": "user",
+        "content": pregunta
+    })
+
+    with st.chat_message("user"):
+        st.markdown(pregunta)
+
+    with st.chat_message("assistant"):
+        try:
+            with st.spinner("Consultando Ollama Cloud y MCP..."):
+                respuesta_ia = consultar_ia(pregunta)
+
+            st.markdown(respuesta_ia)
+
+            st.session_state.historial_ia.append({
+                "role": "assistant",
+                "content": respuesta_ia
+            })
+
+        except Exception as error:
+            st.error(
+                "No se pudo completar la consulta con la IA. "
+                f"Detalle: {error}"
+            )
