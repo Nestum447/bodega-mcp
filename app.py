@@ -389,31 +389,43 @@ def ejecutar_herramienta_ia(nombre, argumentos):
     )
 
 
+
 def consultar_ia(pregunta):
     cliente, modelo = obtener_configuracion_ollama()
+
+    instrucciones = (
+        "Eres un asistente inteligente de inventario de bodega. "
+        "Responde siempre en español, de forma clara y profesional. "
+        "Utiliza las herramientas MCP para consultar datos reales "
+        "cuando el usuario pregunte sobre productos, existencias "
+        "o ubicaciones. No inventes códigos, cantidades ni ubicaciones. "
+        "Interpreta las preguntas de seguimiento usando el historial "
+        "de conversación. Si el usuario dice 'ellos', 'esos productos', "
+        "'allí' o '¿y dónde?', utiliza el contexto anterior para entender "
+        "a qué se refiere. Si falta información, pregunta al usuario. "
+        "La herramienta ubicaciones_vacias identifica productos con "
+        "existencia cero; no confirma que el espacio físico esté libre."
+    )
+
+    # Recuperar el historial de la sesión.
+    # La pregunta actual ya se agregó en el bloque de la interfaz.
+    historial = st.session_state.historial_ia[-12:]
 
     mensajes = [
         {
             "role": "system",
-            "content": (
-                "Eres un asistente de inventario de bodega. "
-                "Responde siempre en español, de forma clara y profesional. "
-                "Para responder preguntas sobre existencias, productos "
-                "o ubicaciones, utiliza las herramientas MCP disponibles. "
-                "No inventes códigos, cantidades ni ubicaciones. "
-                "Si no encuentras un producto, indícalo claramente. "
-                "Importante: ubicaciones_vacias identifica productos "
-                "con existencia cero; no confirma que una ubicación "
-                "física esté libre de otros productos."
-            )
-        },
-        {
-            "role": "user",
-            "content": pregunta
+            "content": instrucciones
         }
     ]
 
-    # Permite que la IA utilice una o varias herramientas MCP.
+    # Enviar las últimas 12 intervenciones como contexto.
+    for elemento in historial:
+        mensajes.append({
+            "role": elemento["role"],
+            "content": elemento["content"]
+        })
+
+    # La IA puede consultar herramientas MCP.
     for _ in range(5):
         respuesta = cliente.chat(
             model=modelo,
@@ -422,13 +434,19 @@ def consultar_ia(pregunta):
         )
 
         mensaje = respuesta.message
-        mensajes.append(mensaje)
-
         llamadas = mensaje.tool_calls or []
 
+        # Si la IA no necesita herramientas, responder al usuario.
         if not llamadas:
-            return mensaje.content or "No se recibió una respuesta de la IA."
+            return (
+                mensaje.content
+                or "No se recibió una respuesta de la IA."
+            )
 
+        # Conservar el mensaje que solicita las herramientas.
+        mensajes.append(mensaje)
+
+        # Ejecutar cada herramienta solicitada por la IA.
         for llamada in llamadas:
             nombre = llamada.function.name
             argumentos = llamada.function.arguments or {}
