@@ -1,3 +1,6 @@
+import re
+import tempfile
+import unicodedata
 import os
 from ollama import Client
 import asyncio
@@ -32,10 +35,19 @@ SERVER_PATH = Path(__file__).parent / "server.py"
 # -------------------------------
 
 async def ejecutar_mcp(nombre_herramienta, argumentos=None):
-    parametros = StdioServerParameters(
-        command=sys.executable,
-        args=[str(SERVER_PATH)]
-    )
+    
+ruta_datos = st.session_state.get("ruta_datos_mcp")
+
+argumentos_servidor = [str(SERVER_PATH)]
+
+if ruta_datos and Path(ruta_datos).exists():
+    argumentos_servidor.append(str(ruta_datos))
+
+parametros = StdioServerParameters(
+    command=sys.executable,
+    args=argumentos_servidor
+)
+
 
     async with stdio_client(parametros) as (lectura, escritura):
         async with ClientSession(lectura, escritura) as sesion:
@@ -133,6 +145,284 @@ def consultar_inventario():
 # -------------------------------
 # CARGA DE DATOS
 # -------------------------------
+
+# ---------- CARGA Y NORMALIZACION DE ARCHIVOS ----------
+
+def normalizar_encabezado(texto):
+    texto = str(texto).strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]", "", texto)
+
+
+ALIAS_COLUMNAS = {
+    "codigo": [
+        "codigo", "codigoproducto", "sku", "material",
+        "item", "articulo", "productcode", "partnumber"
+    ],
+    "producto": [
+        "producto", "descripcion", "descripcionmaterial",
+        "articulo", "nombre", "product", "description"
+    ],
+    "existencia": [
+        "existencia", "existencias", "stock", "cantidad",
+        "cantidaddisponible", "disponible", "inventory",
+        "onhand", "qty", "quantity"
+    ],
+    "ubicacion": [
+        "ubicacion", "posicion", "rack", "bin",
+        "location", "warehousebin"
+    ],
+    "costo_unitario": [
+        "costounitario", "costounit", "preciocosto",
+        "cost", "unitcost", "costoperunit"
+    ]
+}
+
+
+def detectar_columna(columnas, campo):
+    columnas_normalizadas = {
+        columna: normalizar_encabezado(columna)
+        for columna in columnas
+    }
+
+    for alias in ALIAS_COLUMNAS[campo]:
+        for columna, normalizada in columnas_normalizadas.items():
+            if normalizada == alias:
+                return columna
+
+    return "— No asignar —"
+
+
+def leer_archivo_inventario(archivo):
+    extension = Path(archivo.name).suffix.lower()
+
+    if extension == ".xlsx":
+        return pd.read_excel(archivo, dtype=str)
+
+    if extension == ".csv":
+        try:
+            archivo.seek(0)
+            return pd.read_csv(
+                archivo, dtype=str, sep=None,
+                engine="python", encoding="utf-8-sig"
+            )
+        except UnicodeDecodeError:
+            archivo.seek(0)
+            return pd.read_csv(
+                archivo, dtype=str, sep=None,
+                engine="python", encoding="latin-1"
+            )
+
+    raise ValueError("Formato no compatible. Utiliza Excel .xlsx o CSV.")
+
+
+st.divider()
+st.subheader("📂 Cargar inventario desde un archivo")
+
+archivo_inventario = st.file_uploader(
+    "Selecciona tu archivo Excel o CSV",
+    type=["xlsx", "csv"],
+    key="archivo_inventario"
+)
+
+if archivo_inventario is not None:
+    try:
+        df_original = leer_archivo_inventario(archivo_inventario)
+        df_original.columns = [
+            str(columna).strip()
+            for columna in df_original.columns
+        ]
+
+        if df_original.empty:
+            st.warning("El archivo no contiene registros.")
+        else:
+            columnas_archivo = list(df_original.columns)
+            opciones_columnas = [
+                "— No asignar —"
+            ] + columnas_archivo
+
+            st.success(
+                f"Archivo leído: {len(df_original):,} filas "
+                f"y {len(columnas_archivo)} columnas."
+            )
+
+            with st.expander("Vista previa del archivo", expanded=True):
+                st.dataframe(
+                    df_original.head(10),
+                    hide_index=True,
+                    use_container_width=True
+                )
+
+            st.markdown("**Confirma qué columna corresponde a cada campo.**")
+
+            with st.form("formulario_mapeo_inventario"):
+                c1, c2 = st.columns(2)
+
+                with c1:
+                    col_codigo = st.selectbox(
+                        "Código del producto",
+                        opciones_columnas,
+                        index=opciones_columnas.index(
+                            detectar_columna(columnas_archivo, "codigo")
+                        )
+                    )
+
+                    col_producto = st.selectbox(
+                        "Descripción del producto",
+                        opciones_columnas,
+                        index=opciones_columnas.index(
+                            detectar_columna(columnas_archivo, "producto")
+                        )
+                    )
+
+                    col_existencia = st.selectbox(
+                        "Cantidad / existencia",
+                        opciones_columnas,
+                        index=opciones_columnas.index(
+                            detectar_columna(columnas_archivo, "existencia")
+                        )
+                    )
+
+                with c2:
+                    col_ubicacion = st.selectbox(
+                        "Ubicación (opcional)",
+                        opciones_columnas,
+                        index=opciones_columnas.index(
+                            detectar_columna(columnas_archivo, "ubicacion")
+                        )
+                    )
+
+                    col_costo = st.selectbox(
+                        "Costo unitario (opcional)",
+                        opciones_columnas,
+                        index=opciones_columnas.index(
+                            detectar_columna(columnas_archivo, "costo_unitario")
+                        )
+                    )
+
+                aplicar_archivo = st.form_submit_button(
+                    "✅ Aplicar archivo al inventario",
+                    type="primary"
+                )
+
+            if aplicar_archivo:
+                if "— No asignar —" in (
+                    col_codigo, col_producto, col_existencia
+                ):
+                    st.error(
+                        "Debes asignar las columnas de código, "
+                        "producto y existencia."
+                    )
+                elif len({
+                    col_codigo, col_producto, col_existencia
+                }) < 3:
+                    st.error(
+                        "Código, producto y existencia deben "
+                        "ser columnas diferentes."
+                    )
+                else:
+                    df_normalizado = pd.DataFrame({
+                        "codigo": (
+                            df_original[col_codigo]
+                            .fillna("")
+                            .astype(str)
+                            .str.strip()
+                        ),
+                        "producto": (
+                            df_original[col_producto]
+                            .fillna("")
+                            .astype(str)
+                            .str.strip()
+                        ),
+                        "existencia": pd.to_numeric(
+                            df_original[col_existencia]
+                            .astype(str)
+                            .str.replace(",", "", regex=False)
+                            .str.strip(),
+                            errors="coerce"
+                        ).fillna(0)
+                    })
+
+                    if col_ubicacion != "— No asignar —":
+                        df_normalizado["ubicacion"] = (
+                            df_original[col_ubicacion]
+                            .fillna("Sin ubicación")
+                            .astype(str)
+                            .str.strip()
+                        )
+                    else:
+                        df_normalizado["ubicacion"] = "Sin ubicación"
+
+                    if col_costo != "— No asignar —":
+                        df_normalizado["costo_unitario"] = pd.to_numeric(
+                            df_original[col_costo]
+                            .astype(str)
+                            .str.replace(",", "", regex=False)
+                            .str.strip(),
+                            errors="coerce"
+                        )
+
+                    df_normalizado["ubicacion"] = (
+                        df_normalizado["ubicacion"]
+                        .replace("", "Sin ubicación")
+                    )
+
+                    # El mismo conjunto de datos se utiliza en la
+                    # interfaz y se entrega al servidor MCP como JSON.
+                    registros = json.loads(
+                        df_normalizado.to_json(
+                            orient="records",
+                            force_ascii=False
+                        )
+                    )
+
+                    archivo_temporal = tempfile.NamedTemporaryFile(
+                        mode="w",
+                        suffix=".json",
+                        encoding="utf-8",
+                        delete=False
+                    )
+
+                    with archivo_temporal:
+                        json.dump(
+                            registros,
+                            archivo_temporal,
+                            ensure_ascii=False
+                        )
+
+                    ruta_anterior = st.session_state.get(
+                        "ruta_datos_mcp"
+                    )
+
+                    st.session_state["ruta_datos_mcp"] = (
+                        archivo_temporal.name
+                    )
+                    st.session_state["inventario"] = df_normalizado
+
+                    if ruta_anterior and ruta_anterior != archivo_temporal.name:
+                        try:
+                            Path(ruta_anterior).unlink(missing_ok=True)
+                        except OSError:
+                            pass
+
+                    st.session_state["nombre_archivo_inventario"] = (
+                        archivo_inventario.name
+                    )
+
+                    st.success(
+                        "Inventario aplicado correctamente. "
+                        "La tabla utilizará los datos del archivo."
+                    )
+                    st.rerun()
+
+    except Exception as error:
+        st.error(f"No se pudo procesar el archivo: {error}")
+
+
+
+
+
 
 if "inventario" not in st.session_state:
     st.session_state.inventario = None
