@@ -313,12 +313,7 @@ if archivo_inventario is not None:
                   col_fecha_recibo = st.selectbox(
                         "Fecha de recibo (opcional)",
                         opciones_columnas,
-                        index=opciones_columnas.index(
-                            detectar_columna(
-                                columnas_archivo,
-                                "fecha_recibo"
-                            )
-                        )
+                        index=opciones_columnas.index(detectar_columna(columnas_archivo,"fecha_recibo"))
                     )
 
 
