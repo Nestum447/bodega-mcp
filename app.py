@@ -35,19 +35,17 @@ SERVER_PATH = Path(__file__).parent / "server.py"
 # -------------------------------
 
 async def ejecutar_mcp(nombre_herramienta, argumentos=None):
-    
-ruta_datos = st.session_state.get("ruta_datos_mcp")
+    ruta_datos = st.session_state.get("ruta_datos_mcp")
 
-argumentos_servidor = [str(SERVER_PATH)]
+    argumentos_servidor = [str(SERVER_PATH)]
 
-if ruta_datos and Path(ruta_datos).exists():
-    argumentos_servidor.append(str(ruta_datos))
+    if ruta_datos and Path(ruta_datos).exists():
+        argumentos_servidor.append(str(ruta_datos))
 
-parametros = StdioServerParameters(
-    command=sys.executable,
-    args=argumentos_servidor
-)
-
+    parametros = StdioServerParameters(
+        command=sys.executable,
+        args=argumentos_servidor
+    )
 
     async with stdio_client(parametros) as (lectura, escritura):
         async with ClientSession(lectura, escritura) as sesion:
