@@ -174,7 +174,18 @@ ALIAS_COLUMNAS = {
     "costo_unitario": [
         "costounitario", "costounit", "preciocosto",
         "cost", "unitcost", "costoperunit"
+    ],
+
+   "fecha_recibo": [
+        "fechaderecibo",
+        "fecharecibo",
+        "fechaderecepcion",
+        "fecharecepcion",
+        "fechaingreso",
+        "receiptdate",
+        "receivingdate"
     ]
+
 }
 
 
@@ -299,6 +310,20 @@ if archivo_inventario is not None:
                         )
                     )
 
+                  col_fecha_recibo = st.selectbox(
+                        "Fecha de recibo (opcional)",
+                        opciones_columnas,
+                        index=opciones_columnas.index(
+                            detectar_columna(
+                                columnas_archivo,
+                                "fecha_recibo"
+                            )
+                        )
+                    )
+
+
+                
+
                 aplicar_archivo = st.form_submit_button(
                     "✅ Aplicar archivo al inventario",
                     type="primary"
@@ -349,6 +374,23 @@ if archivo_inventario is not None:
                             .astype(str)
                             .str.strip()
                         )
+
+# Fecha de recibo opcional
+                    if col_fecha_recibo != "— No asignar —":
+                        fechas = pd.to_datetime(
+                            df_original[col_fecha_recibo],
+                            errors="coerce",
+                            dayfirst=True
+                        )
+
+                        df_normalizado["fecha_recibo"] = (
+                            fechas.dt.strftime("%Y-%m-%d")
+                        )
+
+
+
+
+                    
                     else:
                         df_normalizado["ubicacion"] = "Sin ubicación"
 
@@ -438,6 +480,43 @@ if st.session_state.inventario is None:
 
 df = st.session_state.inventario.copy()
 
+# -------------------------------
+# CALCULO DE AGING
+# -------------------------------
+
+if "fecha_recibo" in df.columns:
+    df["fecha_recibo"] = pd.to_datetime(
+        df["fecha_recibo"],
+        errors="coerce",
+        dayfirst=True
+    )
+
+    fecha_actual = pd.Timestamp.today().normalize()
+
+    df["aging_dias"] = (
+        fecha_actual - df["fecha_recibo"].dt.normalize()
+    ).dt.days
+
+    df["rango_aging"] = pd.cut(
+        df["aging_dias"],
+        bins=[-1, 30, 60, 90, float("inf")],
+        labels=[
+            "0-30 días",
+            "31-60 días",
+            "61-90 días",
+            "Más de 90 días"
+        ]
+    )
+else:
+    df["fecha_recibo"] = pd.NaT
+    df["aging_dias"] = float("nan")
+    df["rango_aging"] = None
+
+
+
+
+
+
 if df.empty:
     st.warning("No se encontraron registros de inventario.")
     st.stop()
@@ -524,8 +603,17 @@ if filtro_estado != "Todos":
 # -------------------------------
 
 st.dataframe(
-    filtrado[
-        ["codigo", "producto", "ubicacion", "existencia", "estado"]
+     filtrado[
+        [
+            "codigo",
+            "producto",
+            "ubicacion",
+            "existencia",
+            "fecha_recibo",
+            "aging_dias",
+            "rango_aging",
+            "estado"
+        ]
     ],
     hide_index=True,
     use_container_width=True,
@@ -536,7 +624,21 @@ st.dataframe(
         "existencia": st.column_config.NumberColumn(
             "Existencias", format="%d"
         ),
-        "estado": st.column_config.TextColumn("Estado")
+        "estado": st.column_config.TextColumn("Estado"),
+
+         "fecha_recibo": st.column_config.DateColumn(
+            "Fecha de recibo",
+            format="DD/MM/YYYY"
+        ),
+        "aging_dias": st.column_config.NumberColumn(
+            "Aging (días)",
+            format="%d"
+        ),
+        "rango_aging": st.column_config.TextColumn(
+            "Rango de antigüedad"
+        )
+
+        
     }
 )
 
