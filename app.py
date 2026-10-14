@@ -293,7 +293,7 @@ if archivo_inventario is not None:
                         )
                     )
 
-               ```python
+               
                 with c2:
                     col_ubicacion = st.selectbox(
                         "Ubicación (opcional)",
