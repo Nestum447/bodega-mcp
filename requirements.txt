@@ -2,3 +2,5 @@
 streamlit
 mcp>=1.28,<2
 ollama
+pandas
+openpyxl
