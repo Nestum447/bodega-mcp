@@ -752,7 +752,7 @@ HERRAMIENTAS_IA = [
 
 
 def ejecutar_herramienta_ia(nombre, argumentos):
-    ```python
+    
 def ejecutar_herramienta_ia(nombre, argumentos):
     herramientas_permitidas = {
         "listar_inventario",
