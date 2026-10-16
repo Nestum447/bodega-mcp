@@ -751,7 +751,7 @@ HERRAMIENTAS_IA = [
 ]
 
 
-def ejecutar_herramienta_ia(nombre, argumentos):
+
     
 def ejecutar_herramienta_ia(nombre, argumentos):
     herramientas_permitidas = {
