@@ -752,6 +752,8 @@ HERRAMIENTAS_IA = [
 
 
 def ejecutar_herramienta_ia(nombre, argumentos):
+    ```python
+def ejecutar_herramienta_ia(nombre, argumentos):
     herramientas_permitidas = {
         "listar_inventario",
         "consultar_producto",
@@ -767,13 +769,64 @@ def ejecutar_herramienta_ia(nombre, argumentos):
 
     datos = convertir_respuesta(resultado)
 
+    # Los cálculos del inventario se realizan con Python,
+    # no con la IA.
+    if nombre == "listar_inventario":
+
+        if isinstance(datos, dict):
+            datos = [datos]
+
+        if not isinstance(datos, list):
+            raise ValueError(
+                "La herramienta no devolvió una lista de registros."
+            )
+
+        registros = [
+            producto for producto in datos
+            if isinstance(producto, dict)
+        ]
+
+        # Obtener las existencias y convertirlas a números.
+        existencias = pd.to_numeric(
+            pd.Series([
+                producto.get("existencia", 0)
+                for producto in registros
+            ]).astype(str).str.replace(
+                ",", "", regex=False
+            ).str.strip(),
+            errors="coerce"
+        ).fillna(0)
+
+        total_registros = len(registros)
+        total_unidades = float(existencias.sum())
+
+        # Evitar decimales innecesarios cuando el total es entero.
+        if total_unidades.is_integer():
+            total_unidades = int(total_unidades)
+
+        respuesta = {
+            "resumen_calculado_por_python": {
+                "total_registros": total_registros,
+                "total_unidades": total_unidades,
+                "criterio": (
+                    "total_registros cuenta las filas del inventario; "
+                    "total_unidades suma la columna existencia."
+                )
+            },
+            "registros": registros
+        }
+
+        return json.dumps(
+            respuesta,
+            ensure_ascii=False,
+            default=str
+        )
+
     return json.dumps(
         datos,
         ensure_ascii=False,
         default=str
     )
-
-
 
 def consultar_ia(pregunta):
     cliente, modelo = obtener_configuracion_ollama()
@@ -790,6 +843,7 @@ def consultar_ia(pregunta):
         "a qué se refiere. Si falta información, pregunta al usuario. "
         "La herramienta ubicaciones_vacias identifica productos con "
         "existencia cero; no confirma que el espacio físico esté libre."
+        "Cuando consultes la herramienta listar_inventario, utiliza los campos total_registros y total_unidades del objeto resumen_calculado_por_python para responder preguntas sobre cantidades totales. Estos valores han sido calculados mediante Python y son la fuente de referencia para los totales. No vuelvas a sumar manualmente los registros ni estimes cantidades. Si preguntan cuántos productos hay, distingue entre número de registros y total de unidades. Responde con el valor correspondiente al significado de la pregunta."
     )
 
     # Recuperar el historial de la sesión.
