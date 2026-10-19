@@ -1,4 +1,6 @@
 # bodega-mcp
+
+PRUEBA LA APP EN https://bodega-mcp-vlyxdrktkruubnj4flydf8.streamlit.app/
 # 📦 Sistema Inteligente de Inventario de Bodega
 
 Aplicación web para la gestión, consulta y análisis de inventarios mediante **Python, Streamlit, Model Context Protocol (MCP) y Ollama Cloud**.
